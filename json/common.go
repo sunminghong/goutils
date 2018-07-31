@@ -36,7 +36,7 @@ func Encode(obj interface{}) (string,error) {
 }
 
 func EncodeBytes(obj interface{}) ([]byte,error) {
-	jsonBytes, err := json.Marshal(obj)
+	jsonBytes, err := json.MarshalIndent(obj,"","  ")
 	if err != nil {
 		return nil, err
 	}
