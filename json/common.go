@@ -17,7 +17,7 @@ func Decode(body []byte, obj interface{}) error {
 }
 
 func DecodeFromReader(r io.Reader, obj interface{}) error {
-	decoder := json.NewDecoder(r)
+	decoder := NewDecoder(r)
 	if EnableDecoderUseNumber {
 		decoder.UseNumber()
 	}
@@ -28,7 +28,7 @@ func DecodeFromReader(r io.Reader, obj interface{}) error {
 }
 
 func Encode(obj interface{}) (string,error) {
-	jsonBytes, err := json.Marshal(obj)
+	jsonBytes, err := Marshal(obj)
 	if err != nil {
 		return "", err
 	}
@@ -36,7 +36,7 @@ func Encode(obj interface{}) (string,error) {
 }
 
 func EncodeBytes(obj interface{}) ([]byte,error) {
-	jsonBytes, err := json.MarshalIndent(obj,"","  ")
+	jsonBytes, err := MarshalIndent(obj,"","  ")
 	if err != nil {
 		return nil, err
 	}

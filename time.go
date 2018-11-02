@@ -27,7 +27,7 @@ func UnixDay(times ...interface{}) int {
 
 /*
 将字符串类型的时间转换为time类型
-@format string，格式定义可选，默认"2016-01-02 15:04:05"
+@format string，格式定义可选，默认"2006-01-02 15:04:05"
 */
 func Strttime(strtime string, format ...string) (time.Time, error) {
 	f := "2006-01-02 15:04:05"
@@ -40,7 +40,7 @@ func Strttime(strtime string, format ...string) (time.Time, error) {
 /*
 将time类型、int类型（Unix时间戳）转换为 字符串类型， 
 
-@format string，格式定义可选，默认"2016-01-02 15:04:05"
+@format string，格式定义可选，默认"2006-01-02 15:04:05"
 */
 func Strftime(times ...interface{}) string {
 	f := "2006-01-02 15:04:05"
