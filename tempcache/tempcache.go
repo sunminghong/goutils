@@ -1,10 +1,12 @@
 package tempcache
 
 
+type processFunc func(filename string, orginFilename string ,data []byte) bool
+
 type ITempCache interface{
-  //Init(processDelay time.Duration, processHandle func([]byte)bool,  args... interface{})
-  //Write(data []byte)
+  Init(processHandle processFunc, intervalMinuteFlushData int)
   Append(data []byte)
-  ReadAndProcess()
+  SyncCache()
+  Quit()
 }
 

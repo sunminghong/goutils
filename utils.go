@@ -63,6 +63,11 @@ func ListDir(dirPth string, suffix string) (files []string, err error) {
 		if fi.IsDir() { // 忽略目录
 			continue
 		}
+    if suffix == "*" {
+			files = append(files, fi.Name())
+      continue
+    }
+
 		if strings.HasSuffix(strings.ToUpper(fi.Name()), suffix) { //匹配文件
 			files = append(files, fi.Name())
 		}

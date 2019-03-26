@@ -1,9 +1,8 @@
 package tempcache
 
 import (
-	//"path/filepath"
+	"path/filepath"
 	"fmt"
-		//"io/ioutil"
 	"os"
 	"strings"
 	"sync"
@@ -14,133 +13,133 @@ import (
 )
 
 type File struct {
-	file *os.File
 	sync.Mutex
+
+	file *os.File
 }
 
 type FileCache struct {
 	dir string
+	dirCache string
+	dirBak string
 
 	file *File
 
 	filenamePrefix      string
 	filename            string
 	maxBytes            int64
-	checkDurationMinute int
+	intervalMinuteFlushData int
 
 	processHandle processFunc
 
 	in chan []byte
+	quit chan bool
+  stop bool
 
 	lock sync.Mutex
+
+  isSyncing bool
 }
 
-type processFunc func(filename string, data []byte) bool
-
-func NewFileTempCache(
-	dir string,
-	filenamePrefix string,
-	process processFunc,
-	checkDurationMinute int,
-	maxMB int) *FileCache {
-
+func NewFileTempCache( dir string, filenamePrefix string) *FileCache {
 	var lock sync.Mutex
 
 	fc := &FileCache{
 		dir:                 dir,
-		processHandle:       process,
-		maxBytes:            int64(maxMB) * 1024 * 1024,
+    dirCache:            dir + "/cache",
+    dirBak:              dir + "/bak",
 		filename:            filenamePrefix,
-		checkDurationMinute: checkDurationMinute,
 		filenamePrefix:      filenamePrefix,
 
 		file: &File{},
 		in:   make(chan []byte, 20),
+		quit: make(chan bool),
 		lock: lock,
-	}
+    stop: false,
 
-	fc.init()
+    isSyncing: false,
+	}
 
 	return fc
 }
 
+func (fc *FileCache) Init( process processFunc, intervalMinuteFlushData int) {
+  fc.processHandle=       process
+  fc.intervalMinuteFlushData = intervalMinuteFlushData
+
+  os.MkdirAll(fc.dirCache, os.ModeDir)
+  os.MkdirAll(fc.dirBak, os.ModeDir)
+
+	fc.init()
+}
+
 func (fc *FileCache) init() {
-	/*
-		go func() {
-			ticker := time.NewTicker(time.Duration(fc.checkDurationMinute) * time.Minute)
-			defer ticker.Stop()
-
-			for {
-				select {
-				case <-ticker.C:
-					fc.checkMax()
-				}
-			}
-		}()
-	*/
-
+  //启动写入数据缓存goroutine
 	go func() {
 		for {
 			select {
-			case in := <-fc.in:
+			case in ,ok := <-fc.in:
+        if ok {
 				fc._append(in)
+      } else {
+        fc.quit <-true
+        return
+      }
+
+			}
+		}
+	}()
+
+  //启动 定时上报handler callback
+  go func() {
+   // return
+		ticker := time.NewTicker(time.Duration(fc.intervalMinuteFlushData) * time.Minute)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+        log.Debug("===============================timeticker filecache sync callback-------")
+        go fc.SyncCache()
 			}
 		}
 	}()
 
 	log.Debug("xxxxxxxxxxxxxxxxxxxxxxxxxxxxx")
-	fc.ReadAndProcess()
+	fc.SyncCache()
 	log.Debug("yyyyyyyyyyyyyyyyyyyyyyyyyyyyy")
 
-	////fc.openCache()
-}
-
-func (fc *FileCache) checkMax() {
-	fi, err := fc.file.file.Stat()
-	if err != nil {
-		return
-	}
-
-	//如果大于最大字节数，就分文件
-	if fi.Size() >= fc.maxBytes {
-		log.Debug("checkMax:", fi.Size())
-		fc.rename()
-		fc.openCache()
-	}
-}
-
-func (fc *FileCache) rename() {
-	fc.file.Lock()
-	fc.file.file.Close()
-
-	now := utils.Strftime(time.Now(), "060102150405")
-
-	filename := fc.filename
-	oldfile := fmt.Sprintf("%s/%s%s.che", fc.dir, filename, now)
-	os.Rename(filename, oldfile)
-	fc.file.Unlock()
-
+	fc.openCache()
 }
 
 func (fc *FileCache) openCache() {
-	file, err := os.OpenFile(fmt.Sprintf("%s/%s.che", fc.dir, fc.filename), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	now := utils.Strftime(time.Now(), "060102150405")
+	file, err := os.OpenFile(fmt.Sprintf("%s/%s_%s.che", fc.dirCache, fc.filename, now), os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
 		log.Fatal(err)
 	}
 	var lock sync.Mutex
 	fc.file = &File{
-		file,
 		lock,
+		file,
 	}
 }
 
-func (fc *FileCache) ReadAndProcess() {
-	log.Debug("readandprocess!!!!!!!!!!", fc.dir)
+func (fc *FileCache) SyncCache() {
+  if fc.isSyncing {
+    log.Info("syncCache is running!!!!!!!!!!", fc.dirCache)
+    return
+  }
+  fc.isSyncing = true
+	log.Info("syncCache startting", fc.dirCache)
 
 	fc.lock.Lock()
-	defer fc.lock.Unlock()
+	defer func() {
+    fc.lock.Unlock()
+    fc.isSyncing = false
+  }()
 
-	tmps, err := utils.ListDir(fc.dir, "che")
+	tmps, err := utils.ListDir(fc.dirCache, "che")
 	if err != nil {
 		log.Error("read offset tmp error:", err)
 		return
@@ -148,6 +147,7 @@ func (fc *FileCache) ReadAndProcess() {
 
 	if fc.file.file != nil {
 		fc.file.file.Close()
+    fc.openCache()
 	}
 
 	for _, tmp := range tmps {
@@ -156,10 +156,25 @@ func (fc *FileCache) ReadAndProcess() {
 			log.Debug("filenameprefix is not exists:", tmp, fc.filenamePrefix)
 			continue
 		}
-		//先更名
 
-		dofile := fmt.Sprintf("%s/%s_doing.che", fc.dir, tmp[:len(tmp)-4])
-		os.Rename(fc.dir+"/"+tmp, dofile)
+		//先更名
+    fi, err := os.Stat(fc.dirCache+"/"+tmp)
+    if err != nil {
+      continue
+    }
+
+    if fi.Size() == 0 {
+			os.Remove(fc.dirCache+"/"+tmp)
+      continue
+    }
+
+    var dofile string
+    if strings.Index(tmp,"_doing") == -1 {
+      dofile = fmt.Sprintf("%s/%s_doing.che", fc.dirCache, tmp[:len(tmp)-4])
+      os.Rename(fc.dirCache+"/"+tmp, dofile)
+    } else {
+      dofile = fmt.Sprintf("%s/%s", fc.dirCache, tmp)
+    }
 
 		/*
 			fi, err := os.Open(dofile)
@@ -174,26 +189,40 @@ func (fc *FileCache) ReadAndProcess() {
 
 		log.Debug("bbbbbbbbbbbbbbbbbbbbbbbbb")
 		*/
+    oldfile := strings.Replace(dofile, "_doing","", -1)
 
-		rel := fc.processHandle(dofile, []byte{})
+    rel := fc.processHandle(dofile, filepath.Base(oldfile)[:len(filepath.Base(oldfile))-4], []byte{})
 
 		log.Debug("dddddddddddddddddddddddd")
 		if rel {
-			os.Remove(dofile)
+      bakfile := fmt.Sprintf("%s/bak_%s.che", fc.dirBak, tmp[:len(tmp)-4])
+      os.Rename(dofile, bakfile)
 		}
 	}
 
-	fc.openCache()
+}
+
+func (fc *FileCache) Quit() {
+  log.Info("filecache start quitting...")
+  fc.stop = true
+  close(fc.in)
+  <-fc.quit
+  fc.file.file.Close()
+  log.Info("filecache quited")
 }
 
 func (fc *FileCache) Append(data []byte) {
-	fc.in <- data
+  if !fc.stop {
+    fc.in <- data
+  }
 }
 
 func (fc *FileCache) _append(data []byte) {
-	fc.file.Lock()
+	fc.lock.Lock()
+	//fc.file.Lock()
 	if _, err := fc.file.file.Write(data); err != nil {
 		log.Fatal(err)
 	}
-	fc.file.Unlock()
+	//fc.file.Unlock()
+  fc.lock.Unlock()
 }
